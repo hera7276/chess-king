@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>AI 체스 마스터 (Chess AI Master)</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- chess.js 라이브러리 (규칙 검증, 수 생성, 체크/체크메이트 판단) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Pretendard:wght@400;500;600;700;800&display=swap');
+    
+    body {
+      font-family: 'Pretendard', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+
+    /* 체스보드 격자 스타일 */
+    .chess-board {
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      grid-template-rows: repeat(8, 1fr);
+      aspect-ratio: 1 / 1;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    }
+
+    .sq-light {
+      background-color: #f0d9b5;
+    }
+
+    .sq-dark {
+      background-color: #b58863;
+    }
+
+    /* 선택 및 이동 가능 경로 표시 */
+    .sq-selected {
+      background-color: #7b964d !important;
+    }
+
+    .sq-last-move {
+      background-color: rgba(247, 247, 105, 0.5) !important;
+    }
+
+    .sq-in-check {
+      background-color: #e53e3e !important;
+      animation: pulseCheck 1s infinite alternate;
+    }
+
+    @keyframes pulseCheck {
+      from { filter: brightness(1); }
+      to { filter: brightness(1.3); }
+    }
+
+    .move-hint {
+      position: absolute;
+      width: 30%;
+      height: 30%;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, 0.22);
+      pointer-events: none;
+      transition: transform 0.15s ease;
+    }
+
+    .capture-hint {
+      position: absolute;
+      width: 86%;
+      height: 86%;
+      border-radius: 50%;
+      border: 4px solid rgba(220, 38, 38, 0.55);
+      pointer-events: none;
+      box-sizing: border-box;
+    }
+
+    /* 기물 SVG 스타일 */
+    .piece-svg {
+      width: 86%;
+      height: 86%;
+      filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.28));
+      transition: transform 0.12s cubic-bezier(0.34, 1.56, 0.64, 1);
+      cursor: grab;
+    }
+    
+    .piece-svg:active {
+      cursor: grabbing;
+      transform: scale(1.12);
+    }
+
+    /* 스크롤바 커스텀 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #1e293b;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #475569;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #64748b;
+    }
+  </style>
+</head>
+
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between">
+
+  <header class="bg-slate-900 border-b border-slate-800 px-4 py-3 shadow-md">
+    <div class="max-w-6xl mx-auto flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-amber-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+          <i class="fa-solid fa-chess-knight text-xl text-white"></i>
+        </div>
+        <div>
+          <h1 class="text-lg md:text-xl font-extrabold tracking-tight bg-gradient-to-r from-amber-200 via-amber-400 to-indigo-300 bg-clip-text text-transparent">
+            AI 체스 챌린지
+          </h1>
+          <p class="text-xs text-slate-400">지능형 미니맥스 & 알파-베타 엔진 탑재</p>
+        </div>
+      </div>
+
+      <!-- 우측 컨트롤: 음소거, 규칙 도움말 -->
+      <div class="flex items-center space-x-2">
+        <button id="soundToggleBtn" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors" title="효과음 켜기/끄기">
+          <i id="soundIcon" class="fa-solid fa-volume-high"></i>
+        </button>
+        <button id="helpBtn" class="p-2.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors" title="도움말">
+          <i class="fa-solid fa-circle-question"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 메인 게임 영역 -->
+  <main class="max-w-6xl mx-auto w-full px-2 sm:px-4 py-4 md:py-6 flex-1 flex flex-col lg:flex-row gap-6 items-center lg:items-start justify-center">
+
+    <!-- 체스 보드 & 플레이어 프로필 열 -->
+    <div class="w-full max-w-[500px] lg:max-w-[540px] flex flex-col items-center">
+      
+      <!-- 상단 상대(AI) 정보 바 -->
+      <div class="w-full bg-slate-900/90 backdrop-blur rounded-t-xl px-4 py-3 border border-slate-800 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="relative">
+            <div id="aiAvatarBg" class="w-10 h-10 rounded-full bg-rose-600/20 border-2 border-rose-500 flex items-center justify-center">
+              <i class="fa-solid fa-robot text-rose-400 text-lg"></i>
+            </div>
+            <span id="aiThinkingBadge" class="hidden absolute -bottom-1 -right-1 flex h-3.5 w-3.5">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-3.5 w-3.5 bg-rose-500"></span>
+            </span>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-sm md:text-base text-slate-200">체스봇 AI</span>
+              <span id="aiBadgeDifficulty" class="text-[11px] px-2 py-0.5 rounded-full bg-rose-950/80 text-rose-300 border border-rose-800/60 font-medium">보통</span>
+            </div>
+            <!-- AI가 잡은 기물들 -->
+            <div id="aiCapturedPieces" class="flex items-center space-x-0.5 text-xs text-slate-400 min-h-[20px] mt-0.5"></div>
+          </div>
+        </div>
+        <!-- AI 생각 중 상태 메시지 -->
+        <div id="aiStatusText" class="text-xs font-medium text-slate-400 flex items-center space-x-1.5">
+          <span>대기 중</span>
+        </div>
+      </div>
+
+      <!-- 실제 체스 보드 -->
+      <div class="relative w-full aspect-square bg-slate-800 border-x-4 border-slate-800 shadow-2xl overflow-hidden select-none">
+        <div id="board" class="chess-board w-full h-full relative">
+          <!-- 64개 칸 동적 생성 -->
+        </div>
+
+        <!-- 체스판 테두리 좌표 표기 (가로: a-h, 세로: 1-8) -->
+        <div id="coordOverlay" class="pointer-events-none absolute inset-0 z-10"></div>
+      </div>
+
+      <!-- 하단 플레이어 정보 바 -->
+      <div class="w-full bg-slate-900/90 backdrop-blur rounded-b-xl px-4 py-3 border border-slate-800 flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-full bg-emerald-600/20 border-2 border-emerald-500 flex items-center justify-center">
+            <i class="fa-solid fa-user text-emerald-400 text-lg"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-sm md:text-base text-slate-200">나 (Player)</span>
+              <span id="playerSideBadge" class="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 font-medium">백(White) 선공</span>
+            </div>
+            <!-- 플레이어가 잡은 기물들 -->
+            <div id="playerCapturedPieces" class="flex items-center space-x-0.5 text-xs text-slate-400 min-h-[20px] mt-0.5"></div>
+          </div>
+        </div>
+
+        <!-- 턴 알림 표시기 -->
+        <div id="turnBadge" class="px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-md bg-amber-500 text-slate-950 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span>
+          <span>내 차례</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 우측 제어 패널 & 기보(Move History) -->
+    <div class="w-full lg:w-80 flex flex-col gap-4">
+
+      <!-- 게임 설정 카드 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
+        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-indigo-400"></i> 대전 설정
+        </h2>
+        
+        <div class="space-y-3">
+          <!-- 난이도 선택 (단계별 해금 적용) -->
+          <div>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-xs font-medium text-slate-400">
+                AI 난이도 <span id="unlockProgressText" class="text-amber-400 font-bold ml-1">(1/4 해금)</span>
+              </label>
+              <button id="resetProgressBtn" class="text-[10px] text-slate-500 hover:text-rose-400 transition underline" title="처음부터 다시 도전">
+                해금 초기화
+              </button>
+            </div>
+            <div class="grid grid-cols-4 gap-1.5" id="diffButtonsWrapper">
+              <button data-level="1" class="diff-btn py-2 text-xs font-semibold rounded-lg border border-indigo-500 bg-indigo-600 text-white shadow-md shadow-indigo-600/30 transition flex flex-col items-center justify-center gap-0.5">
+                <span>초급</span>
+                <span class="text-[9px] text-emerald-300 font-normal">Lv.1</span>
+              </button>
+              <button data-level="2" class="diff-btn py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-800/60 text-slate-500 cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5 opacity-60">
+                <span><i class="fa-solid fa-lock text-[10px] mr-1"></i>중급</span>
+                <span class="text-[9px] text-slate-500 font-normal">Lv.2</span>
+              </button>
+              <button data-level="3" class="diff-btn py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-800/60 text-slate-500 cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5 opacity-60">
+                <span><i class="fa-solid fa-lock text-[10px] mr-1"></i>고급</span>
+                <span class="text-[9px] text-slate-500 font-normal">Lv.3</span>
+              </button>
+              <button data-level="4" class="diff-btn py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-800/60 text-slate-500 cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5 opacity-60">
+                <span><i class="fa-solid fa-lock text-[10px] mr-1"></i>마스터</span>
+                <span class="text-[9px] text-slate-500 font-normal">Lv.4</span>
+              </button>
+            </div>
+            <!-- 잠금 알림 안내 문구 -->
+            <p id="lockNoticeText" class="text-[11px] text-amber-400/90 mt-1.5 hidden flex items-center gap-1">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>이전 레벨을 이겨야 다음 난이도가 해금됩니다!</span>
+            </p>
+          </div>
+
+          <!-- 진영 선택 -->
+          <div>
+            <label class="block text-xs font-medium text-slate-400 mb-1.5">내 진영 선택</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button id="sideWhiteBtn" class="py-2 px-3 rounded-lg border-2 border-amber-400 bg-amber-500/10 text-amber-200 text-xs font-bold flex items-center justify-center gap-2 transition">
+                <span class="w-3 h-3 rounded-full bg-white border border-slate-400 shadow"></span>
+                백 (선공)
+              </button>
+              <button id="sideBlackBtn" class="py-2 px-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-400 text-xs font-bold flex items-center justify-center gap-2 transition hover:border-slate-500">
+                <span class="w-3 h-3 rounded-full bg-slate-900 border border-slate-600 shadow"></span>
+                흑 (후공)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 실행 버튼 그룹 -->
+        <div class="grid grid-cols-2 gap-2 mt-4 pt-3 border-t border-slate-800">
+          <button id="newGameBtn" class="py-2.5 px-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-rotate-right"></i> 새 게임
+          </button>
+          <button id="undoMoveBtn" class="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 text-xs font-bold rounded-xl border border-slate-700 flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-arrow-rotate-left"></i> 무르기
+          </button>
+        </div>
+      </div>
+
+      <!-- 기보 히스토리 카드 -->
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex-1 flex flex-col min-h-[220px]">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+            <i class="fa-solid fa-scroll text-amber-400"></i> 기보 기록
+          </h2>
+          <span id="moveCountText" class="text-xs text-slate-500 font-mono">0 수 진행</span>
+        </div>
+
+        <!-- 기보 리스트 영역 -->
+        <div id="movesContainer" class="flex-1 max-h-52 overflow-y-auto space-y-1 pr-1 font-mono text-xs">
+          <div class="text-center py-6 text-slate-500 italic text-xs">
+            기물이 이동하면 이곳에 표준 기보법(SAN)이 기록됩니다.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- 폰 프로모션(승급) 모달 다이얼로그 -->
+  <div id="promotionModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl transform scale-100 transition-all">
+      <h3 class="text-lg font-bold text-amber-300 mb-1">폰 승급 (Pawn Promotion)</h3>
+      <p class="text-xs text-slate-400 mb-4">폰을 바꿀 강력한 기물을 선택하세요.</p>
+      <div class="grid grid-cols-4 gap-3" id="promotionChoices">
+        <!-- 동적으로 백/흑에 맞춰 생성 -->
+      </div>
+    </div>
+  </div>
+
+  <!-- 게임 종료 모달 다이얼로그 -->
+  <div id="gameOverModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-3xl p-6 md:p-8 max-w-sm w-full text-center shadow-2xl relative overflow-hidden">
+      <div id="modalConfetti" class="absolute -top-12 -left-12 w-32 h-32 bg-amber-500/20 rounded-full blur-2xl pointer-events-none"></div>
+      <div id="gameOverIcon" class="w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 border-2 border-amber-400 text-amber-400 flex items-center justify-center text-3xl mb-4">
+        <i class="fa-solid fa-trophy"></i>
+      </div>
+      <h2 id="gameOverTitle" class="text-2xl font-black text-white mb-2">승리하셨습니다!</h2>
+      <p id="gameOverDesc" class="text-sm text-slate-400 mb-4">인공지능을 상대로 체크메이트를 달성했습니다.</p>
+      
+      <!-- 신규 레벨 잠금 해제 축하 카드 -->
+      <div id="levelUnlockAlert" class="hidden mb-4 p-3 bg-gradient-to-r from-amber-500/20 to-emerald-500/20 border border-amber-400/40 rounded-xl text-center">
+        <div class="text-xs font-bold text-amber-300 flex items-center justify-center gap-1.5">
+          <i class="fa-solid fa-unlock-keyhole text-amber-400"></i>
+          <span>새로운 난이도 해금!</span>
+        </div>
+        <p id="levelUnlockName" class="text-xs text-slate-200 mt-1 font-semibold">Lv.2 중급 AI 도전 가능</p>
+      </div>
+
+      <div class="flex flex-col gap-2">
+        <button id="modalNextLevelBtn" class="hidden w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 active:scale-95 text-white font-bold rounded-xl shadow-lg shadow-emerald-500/30 flex items-center justify-center gap-2 transition">
+          <i class="fa-solid fa-forward-step"></i> 다음 난이도 도전하기
+        </button>
+        <button id="modalRestartBtn" class="w-full py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 text-slate-950 font-bold rounded-xl shadow-lg transition">
+          다시 대국하기
+        </button>
+        <button id="modalCloseBtn" class="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-xl text-xs transition">
+          보드 살펴보기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 도움말 모달 -->
+  <div id="helpModal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-base font-bold text-amber-300 flex items-center gap-2">
+          <i class="fa-solid fa-book-open"></i> 게임 플레이 및 규칙 가이드
+        </h3>
+        <button id="closeHelpBtn" class="text-slate-400 hover:text-white p-1">
+          <i class="fa-solid fa-xmark text-lg"></i>
+        </button>
+      </div>
+      <div class="space-y-3 text-xs text-slate-300 leading-relaxed max-h-80 overflow-y-auto pr-1">
+        <div class="p-3 bg-slate-800/60 rounded-xl">
+          <p class="font-bold text-white mb-1"><i class="fa-regular fa-hand-pointer text-indigo-400 mr-1"></i> 조작법</p>
+          <p>내 차례에 기물을 클릭(터치)하면 이동 가능한 위치가 녹색 점/빨간 원으로 표시됩니다. 원하는 칸을 클릭하면 이동합니다.</p>
+        </div>
+        <div class="p-3 bg-slate-800/60 rounded-xl">
+          <p class="font-bold text-white mb-1"><i class="fa-solid fa-microchip text-rose-400 mr-1"></i> AI 난이도</p>
+          <ul class="list-disc list-inside space-y-1 text-slate-400">
+            <li><span class="text-slate-200 font-semibold">초급:</span> 가벼운 탐색과 기초적 수읽기 (초심자용)</li>
+            <li><span class="text-slate-200 font-semibold">중급:</span> 기물 위치 테이블 기반 2수 앞 탐색</li>
+            <li><span class="text-slate-200 font-semibold">고급:</span> 알파-베타 가지치기 3수 깊이 탐색</li>
+            <li><span class="text-slate-200 font-semibold">마스터:</span> 깊이 4수 정밀 탐색 및 중앙 주도권 수읽기</li>
+          </ul>
+        </div>
+        <div class="p-3 bg-slate-800/60 rounded-xl">
+          <p class="font-bold text-white mb-1"><i class="fa-solid fa-shield-halved text-amber-400 mr-1"></i> 특수 규칙 완벽 지원</p>
+          <p>캐슬링(Castling), 앙파상(En Passant), 폰 프로모션(승급) 등 국제 체스 공식 규칙이 100% 동작합니다.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 푸터 -->
+  <footer class="bg-slate-950 border-t border-slate-900 py-3 text-center text-xs text-slate-500">
+    Chess AI Engine & Interactive Board &copy; 2026. Made with Precision.
+  </footer>
+
+  <script>
+    // Web Audio API를 활용한 효과음 생성기 (외부 파일 로딩 에러 방지)
+    class SoundFX {
+      constructor() {
+        this.ctx = null;
+        this.enabled = true;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) {
+            this.ctx = new AudioContext();
+          }
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      playTone(freq, type, duration, gainValue = 0.15) {
+        if (!this.enabled) return;
+        this.init();
+        if (!this.ctx) return;
+
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = type;
+          osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+
+          gain.gain.setValueAtTime(gainValue, this.ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, this.ctx.currentTime + duration);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          osc.start();
+          osc.stop(this.ctx.currentTime + duration);
+        } catch (e) {
+          console.warn("Sound play error", e);
+        }
+      }
+
+      move() {
+        this.playTone(320, 'sine', 0.09, 0.12);
+      }
+
+      capture() {
+        this.playTone(460, 'triangle', 0.15, 0.2);
+        setTimeout(() => this.playTone(280, 'sine', 0.12, 0.15), 50);
+      }
+
+      check() {
+        this.playTone(660, 'sine', 0.18, 0.25);
+        setTimeout(() => this.playTone(880, 'sine', 0.25, 0.25), 100);
+      }
+
+      gameover(win = true) {
+        if (win) {
+          this.playTone(440, 'triangle', 0.15, 0.2);
+          setTimeout(() => this.playTone(554, 'triangle', 0.15, 0.2), 120);
+          setTimeout(() => this.playTone(659, 'triangle', 0.3, 0.25), 240);
+        } else {
+          this.playTone(350, 'sawtooth', 0.2, 0.15);
+          setTimeout(() => this.playTone(280, 'sawtooth', 0.35, 0.15), 180);
+        }
+      }
+    }
+
+    const sfx = new SoundFX();
+
+    // 고화질 체스 기물 벡터(SVG) 데이터 정의
+    const PIECE_SVGS = {
+      wP: `<svg class="piece-svg" viewBox="0 0 45 45"><path d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 l 23,0 c 0,-7.92 -4.41,-12.41 -7.41,-13.47 C 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z" fill="#ffffff" stroke="#1e293b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+      wN: `<svg class="piece-svg" viewBox="0 0 45 45"><path d="m 22,10 c -4.5,0 -8.5,3 -8.5,8.5 0,2.5 1,4.5 2,6 -2,1 -4,3 -4,6.5 0,4.5 4,7 10,7 6,0 10,-2.5 10,-7 0,-3.5 -2,-5.5 -4,-6.5 1,-1.5 2,-3.5 2,-6 0,-5.5 -4,-8.5 -7.5,-8.5 z" fill="none"/><path d="m 22,10 c 3,0 6,1 6,4 0,3 -2,5.5 -4,5.5 0,0 3,0 4,2 1,2 -1,4 -3,4.5 0,0 2,0.5 2,2 0,1.5 -2,2 -4,2.5 0,0 2,0.5 1.5,2 -0.5,1.5 -3,1.5 -4.5,1.5 -3,0 -7,-2 -7,-5.5 0,-2.5 2,-4.5 3,-6 -3,-0.5 -4.5,-2.5 -4.5,-4.5 0,-4.5 4,-7.5 7,-7.5 z" fill="#ffffff" stroke="#1e293b" stroke-width="1.8" stroke-linejoin="round"/><circle cx="17.5" cy="15.5" r="1.5" fill="#1e293b"/></svg>`,
+      wB: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#ffffff" stroke="#1e293b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m 9,36 c 3.39,-0.97 10.11,0.43 13.5,-2 3.39,2.43 10.11,1.03 13.5,2 0,0 1.5,0.5 2.5,2 -13.5,0 -26,0 -29.5,0 1,-1.5 2.5,-2 2.5,-2 z"/><path d="m 15,32 c 2.5,2.5 12.5,2.5 15,0 0.5,-1.5 0,-2 0,-2 0,-2.5 -2.5,-4 -2.5,-4 5.5,-1.5 6,-11.5 -5,-15.5 -11,4 -10.5,14 -5,15.5 0,0 -2.5,1.5 -2.5,4 0,0 -0.5,0.5 0,2 z"/><path d="m 25,8 a 2.5,2.5 0 1 1 -5,0 2.5,2.5 0 1 1 5,0 z"/><path d="m 17.5,26 c 2,1 8,1 10,0" fill="none"/></g></svg>`,
+      wR: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#ffffff" stroke="#1e293b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m 9,39 27,0 c 0,-3 -2,-4 -2,-4 l -23,0 c 0,0 -2,1 -2,4 z"/><path d="m 12,35 21,0 c 0,-1.5 -1.5,-3 -2.5,-3 l -16,0 c -1,0 -2.5,1.5 -2.5,3 z"/><path d="m 14,32 17,0 0,-18 -17,0 0,18 z"/><path d="m 14,14 17,0 c 1,-1.5 2,-2.5 2,-4 l -21,0 c 0,1.5 1,2.5 2,4 z"/><path d="m 11,10 23,0 0,-4.5 -4,0 0,2 -3.5,0 0,-2 -4,0 0,2 -3.5,0 0,-2 -4,0 0,4.5 z"/></g></svg>`,
+      wQ: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#ffffff" stroke="#1e293b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m 9,36 c 3.39,-0.97 10.11,0.43 13.5,-2 3.39,2.43 10.11,1.03 13.5,2 0,0 1.5,0.5 2.5,2 -13.5,0 -26,0 -29.5,0 1,-1.5 2.5,-2 2.5,-2 z"/><path d="m 12,33 c 2.5,2 18.5,2 21,0 0,-1 -1,-1.5 -1,-1.5 -3,-1 -6,-3 -9.5,-3 -3.5,0 -6.5,2 -9.5,3 0,0 -1,0.5 -1,1.5 z"/><path d="m 9,26 c 0,2 1.5,2 2.5,4 2.5,-1 5.5,-1 11,-1 5.5,0 8.5,0 11,1 1,-2 2.5,-2 2.5,-4 0,-1.5 -1.5,-2.5 -2.5,-2.5 -1.5,0 -3,2 -3,2 -1.5,-2.5 -3.5,-4.5 -7,-4.5 -3.5,0 -5.5,2 -7,4.5 0,0 -1.5,-2 -3,-2 -1,0 -2.5,1 -2.5,2.5 z"/><path d="m 9,26 3,-13 4,9 6.5,-12 6.5,12 4,-9 3,13 z"/><circle cx="6" cy="12" r="2"/><circle cx="14" cy="9" r="2"/><circle cx="22.5" cy="8" r="2"/><circle cx="31" cy="9" r="2"/><circle cx="39" cy="12" r="2"/></g></svg>`,
+      wK: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#ffffff" stroke="#1e293b" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m 22.5,11.63 0,-6"/><path d="m 19.5,8.63 6,0"/><path d="m 9,36 c 3.39,-0.97 10.11,0.43 13.5,-2 3.39,2.43 10.11,1.03 13.5,2 0,0 1.5,0.5 2.5,2 -13.5,0 -26,0 -29.5,0 1,-1.5 2.5,-2 2.5,-2 z"/><path d="m 11.5,30 c 3.5,-1 18.5,-1 22,0 1,-1.5 1.5,-3.5 1.5,-5.5 0,-6 -4.5,-10.5 -12.5,-10.5 -8,0 -12.5,4.5 -12.5,10.5 0,2 0.5,4 1.5,5.5 z"/><path d="m 11.5,30 c 2.5,2 18.5,2 21,0"/></g></svg>`,
+
+      bP: `<svg class="piece-svg" viewBox="0 0 45 45"><path d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 l 23,0 c 0,-7.92 -4.41,-12.41 -7.41,-13.47 C 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z" fill="#1e293b" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+      bN: `<svg class="piece-svg" viewBox="0 0 45 45"><path d="m 22,10 c -4.5,0 -8.5,3 -8.5,8.5 0,2.5 1,4.5 2,6 -2,1 -4,3 -4,6.5 0,4.5 4,7 10,7 6,0 10,-2.5 10,-7 0,-3.5 -2,-5.5 -4,-6.5 1,-1.5 2,-3.5 2,-6 0,-5.5 -4,-8.5 -7.5,-8.5 z" fill="none"/><path d="m 22,10 c 3,0 6,1 6,4 0,3 -2,5.5 -4,5.5 0,0 3,0 4,2 1,2 -1,4 -3,4.5 0,0 2,0.5 2,2 0,1.5 -2,2 -4,2.5 0,0 2,0.5 1.5,2 -0.5,1.5 -3,1.5 -4.5,1.5 -3,0 -7,-2 -7,-5.5 0,-2.5 2,-4.5 3,-6 -3,-0.5 -4.5,-2.5 -4.5,-4.5 0,-4.5 4,-7.5 7,-7.5 z" fill="#1e293b" stroke="#cbd5e1" stroke-width="1.6" stroke-linejoin="round"/><circle cx="17.5" cy="15.5" r="1.5" fill="#f8fafc"/></svg>`,
+      bB: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#1e293b" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m 9,36 c 3.39,-0.97 10.11,0.43 13.5,-2 3.39,2.43 10.11,1.03 13.5,2 0,0 1.5,0.5 2.5,2 -13.5,0 -26,0 -29.5,0 1,-1.5 2.5,-2 2.5,-2 z"/><path d="m 15,32 c 2.5,2.5 12.5,2.5 15,0 0.5,-1.5 0,-2 0,-2 0,-2.5 -2.5,-4 -2.5,-4 5.5,-1.5 6,-11.5 -5,-15.5 -11,4 -10.5,14 -5,15.5 0,0 -2.5,1.5 -2.5,4 0,0 -0.5,0.5 0,2 z"/><path d="m 25,8 a 2.5,2.5 0 1 1 -5,0 2.5,2.5 0 1 1 5,0 z"/><path d="m 17.5,26 c 2,1 8,1 10,0" fill="none"/></g></svg>`,
+      bR: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#1e293b" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m 9,39 27,0 c 0,-3 -2,-4 -2,-4 l -23,0 c 0,0 -2,1 -2,4 z"/><path d="m 12,35 21,0 c 0,-1.5 -1.5,-3 -2.5,-3 l -16,0 c -1,0 -2.5,1.5 -2.5,3 z"/><path d="m 14,32 17,0 0,-18 -17,0 0,18 z"/><path d="m 14,14 17,0 c 1,-1.5 2,-2.5 2,-4 l -21,0 c 0,1.5 1,2.5 2,4 z"/><path d="m 11,10 23,0 0,-4.5 -4,0 0,2 -3.5,0 0,-2 -4,0 0,2 -3.5,0 0,-2 -4,0 0,4.5 z"/></g></svg>`,
+      bQ: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#1e293b" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m 9,36 c 3.39,-0.97 10.11,0.43 13.5,-2 3.39,2.43 10.11,1.03 13.5,2 0,0 1.5,0.5 2.5,2 -13.5,0 -26,0 -29.5,0 1,-1.5 2.5,-2 2.5,-2 z"/><path d="m 12,33 c 2.5,2 18.5,2 21,0 0,-1 -1,-1.5 -1,-1.5 -3,-1 -6,-3 -9.5,-3 -3.5,0 -6.5,2 -9.5,3 0,0 -1,0.5 -1,1.5 z"/><path d="m 9,26 c 0,2 1.5,2 2.5,4 2.5,-1 5.5,-1 11,-1 5.5,0 8.5,0 11,1 1,-2 2.5,-2 2.5,-4 0,-1.5 -1.5,-2.5 -2.5,-2.5 -1.5,0 -3,2 -3,2 -1.5,-2.5 -3.5,-4.5 -7,-4.5 -3.5,0 -5.5,2 -7,4.5 0,0 -1.5,-2 -3,-2 -1,0 -2.5,1 -2.5,2.5 z"/><path d="m 9,26 3,-13 4,9 6.5,-12 6.5,12 4,-9 3,13 z"/><circle cx="6" cy="12" r="2"/><circle cx="14" cy="9" r="2"/><circle cx="22.5" cy="8" r="2"/><circle cx="31" cy="9" r="2"/><circle cx="39" cy="12" r="2"/></g></svg>`,
+      bK: `<svg class="piece-svg" viewBox="0 0 45 45"><g fill="#1e293b" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m 22.5,11.63 0,-6"/><path d="m 19.5,8.63 6,0"/><path d="m 9,36 c 3.39,-0.97 10.11,0.43 13.5,-2 3.39,2.43 10.11,1.03 13.5,2 0,0 1.5,0.5 2.5,2 -13.5,0 -26,0 -29.5,0 1,-1.5 2.5,-2 2.5,-2 z"/><path d="m 11.5,30 c 3.5,-1 18.5,-1 22,0 1,-1.5 1.5,-3.5 1.5,-5.5 0,-6 -4.5,-10.5 -12.5,-10.5 -8,0 -12.5,4.5 -12.5,10.5 0,2 0.5,4 1.5,5.5 z"/><path d="m 11.5,30 c 2.5,2 18.5,2 21,0"/></g></svg>`
+    };
+
+    // 전역 상태 관리
+    let chess = new Chess();
+    let playerColor = 'w'; // 'w' 또는 'b'
+    
+    // 로컬 스토리지에서 해금된 최고 레벨 불러오기 (기본값: 1레벨)
+    const STORAGE_KEY = 'chess_unlocked_level';
+    let maxUnlockedLevel = parseInt(localStorage.getItem(STORAGE_KEY) || '1', 10);
+    if (isNaN(maxUnlockedLevel) || maxUnlockedLevel < 1) maxUnlockedLevel = 1;
+    if (maxUnlockedLevel > 4) maxUnlockedLevel = 4;
+
+    // 현재 플레이할 난이도 설정
+    let aiDifficulty = Math.min(maxUnlockedLevel, 1);
+    let selectedSquare = null;
+    let legalMovesForSelected = [];
+    let pendingPromotionMove = null;
+    let isAiThinking = false;
+    let lastMove = null;
+
+    const LEVEL_CONFIG = {
+      1: { name: '초급', sub: 'Lv.1', depth: 1 },
+      2: { name: '중급', sub: 'Lv.2', depth: 2 },
+      3: { name: '고급', sub: 'Lv.3', depth: 3 },
+      4: { name: '마스터', sub: 'Lv.4', depth: 4 }
+    };
+
+    // 기물 점수 기준 (Centipawns)
+    const PIECE_VALUES = {
+      p: 100,
+      n: 320,
+      b: 330,
+      r: 500,
+      q: 900,
+      k: 20000
+    };
+
+    // 위치 평가 테이블 (PST: Piece-Square Tables)
+    const PAWN_PST = [
+      [0,  0,  0,  0,  0,  0,  0,  0],
+      [50, 50, 50, 50, 50, 50, 50, 50],
+      [10, 10, 20, 30, 30, 20, 10, 10],
+      [5,  5, 10, 25, 25, 10,  5,  5],
+      [0,  0,  0, 20, 20,  0,  0,  0],
+      [5, -5,-10,  0,  0,-10, -5,  5],
+      [5, 10, 10,-20,-20, 10, 10,  5],
+      [0,  0,  0,  0,  0,  0,  0,  0]
+    ];
+
+    const KNIGHT_PST = [
+      [-50,-40,-30,-30,-30,-30,-40,-50],
+      [-40,-20,  0,  0,  0,  0,-20,-40],
+      [-30,  0, 10, 15, 15, 10,  0,-30],
+      [-30,  5, 15, 20, 20, 15,  5,-30],
+      [-30,  0, 15, 20, 20, 15,  0,-30],
+      [-30,  5, 10, 15, 15, 10,  5,-30],
+      [-40,-20,  0,  5,  5,  0,-20,-40],
+      [-50,-40,-30,-30,-30,-30,-40,-50]
+    ];
+
+    const BISHOP_PST = [
+      [-20,-10,-10,-10,-10,-10,-10,-20],
+      [-10,  0,  0,  0,  0,  0,  0,-10],
+      [-10,  0,  5, 10, 10,  5,  0,-10],
+      [-10,  5,  5, 10, 10,  5,  5,-10],
+      [-10,  0, 10, 10, 10, 10,  0,-10],
+      [-10, 10, 10, 10, 10, 10, 10,-10],
+      [-10,  5,  0,  0,  0,  0,  5,-10],
+      [-20,-10,-10,-10,-10,-10,-10,-20]
+    ];
+
+    const ROOK_PST = [
+      [0,  0,  0,  0,  0,  0,  0,  0],
+      [5, 10, 10, 10, 10, 10, 10,  5],
+      [-5,  0,  0,  0,  0,  0,  0, -5],
+      [-5,  0,  0,  0,  0,  0,  0, -5],
+      [-5,  0,  0,  0,  0,  0,  0, -5],
+      [-5,  0,  0,  0,  0,  0,  0, -5],
+      [-5,  0,  0,  0,  0,  0,  0, -5],
+      [0,  0,  0,  5,  5,  0,  0,  0]
+    ];
+
+    const QUEEN_PST = [
+      [-20,-10,-10, -5, -5,-10,-10,-20],
+      [-10,  0,  0,  0,  0,  0,  0,-10],
+      [-10,  0,  5,  5,  5,  5,  0,-10],
+      [-5,  0,  5,  5,  5,  5,  0, -5],
+      [0,  0,  5,  5,  5,  5,  0, -5],
+      [-10,  5,  5,  5,  5,  5,  0,-10],
+      [-10,  0,  5,  0,  0,  0,  0,-10],
+      [-20,-10,-10, -5, -5,-10,-10,-20]
+    ];
+
+    const KING_PST = [
+      [-30,-40,-40,-50,-50,-40,-40,-30],
+      [-30,-40,-40,-50,-50,-40,-40,-30],
+      [-30,-40,-40,-50,-50,-40,-40,-30],
+      [-30,-40,-40,-50,-50,-40,-40,-30],
+      [-20,-30,-30,-40,-40,-30,-30,-20],
+      [-10,-20,-20,-20,-20,-20,-20,-10],
+      [20, 20,  0,  0,  0,  0, 20, 20],
+      [20, 30, 10,  0,  0, 10, 30, 20]
+    ];
+
+    // 보드 평가 함수 (White 관점 점수)
+    function evaluateBoard(game) {
+      if (game.in_checkmate()) {
+        return game.turn() === 'w' ? -99999 : 99999;
+      }
+      if (game.in_draw() || game.in_stalemate() || game.in_threefold_repetition()) {
+        return 0;
+      }
+
+      let score = 0;
+      const board = game.board();
+
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const p = board[r][c];
+          if (!p) continue;
+
+          let val = PIECE_VALUES[p.type] || 0;
+          let pstVal = 0;
+
+          const rowIdx = p.color === 'w' ? r : (7 - r);
+          const colIdx = c;
+
+          if (p.type === 'p') pstVal = PAWN_PST[rowIdx][colIdx];
+          else if (p.type === 'n') pstVal = KNIGHT_PST[rowIdx][colIdx];
+          else if (p.type === 'b') pstVal = BISHOP_PST[rowIdx][colIdx];
+          else if (p.type === 'r') pstVal = ROOK_PST[rowIdx][colIdx];
+          else if (p.type === 'q') pstVal = QUEEN_PST[rowIdx][colIdx];
+          else if (p.type === 'k') pstVal = KING_PST[rowIdx][colIdx];
+
+          const totalPieceVal = val + pstVal;
+          if (p.color === 'w') {
+            score += totalPieceVal;
+          } else {
+            score -= totalPieceVal;
+          }
+        }
+      }
+      return score;
+    }
+
+    // Minimax 알고리즘 (알파-베타 가지치기)
+    function minimax(game, depth, alpha, beta, isMaximizing) {
+      if (depth === 0 || game.game_over()) {
+        return evaluateBoard(game);
+      }
+
+      const moves = game.moves();
+      moves.sort((a, b) => (b.includes('x') ? 1 : 0) - (a.includes('x') ? 1 : 0));
+
+      if (isMaximizing) {
+        let maxEval = -Infinity;
+        for (let i = 0; i < moves.length; i++) {
+          game.move(moves[i]);
+          const evalScore = minimax(game, depth - 1, alpha, beta, false);
+          game.undo();
+          maxEval = Math.max(maxEval, evalScore);
+          alpha = Math.max(alpha, evalScore);
+          if (beta <= alpha) break;
+        }
+        return maxEval;
+      } else {
+        let minEval = Infinity;
+        for (let i = 0; i < moves.length; i++) {
+          game.move(moves[i]);
+          const evalScore = minimax(game, depth - 1, alpha, beta, true);
+          game.undo();
+          minEval = Math.min(minEval, evalScore);
+          beta = Math.min(beta, evalScore);
+          if (beta <= alpha) break;
+        }
+        return minEval;
+      }
+    }
+
+    // AI의 최적수 도출
+    function calculateBestMove(game, depth, aiColor) {
+      const moves = game.moves({ verbose: true });
+      if (moves.length === 0) return null;
+
+      // 난이도 1 (초급): 35% 확률로 임의의 수 선택
+      if (aiDifficulty === 1 && Math.random() < 0.35) {
+        return moves[Math.floor(Math.random() * moves.length)];
+      }
+
+      let bestMove = null;
+      const isMax = (aiColor === 'w');
+      let bestValue = isMax ? -Infinity : Infinity;
+
+      moves.sort(() => Math.random() - 0.5);
+
+      let alpha = -Infinity;
+      let beta = Infinity;
+
+      for (let i = 0; i < moves.length; i++) {
+        const move = moves[i];
+        game.move(move);
+        const boardVal = minimax(game, depth - 1, alpha, beta, !isMax);
+        game.undo();
+
+        if (isMax) {
+          if (boardVal > bestValue) {
+            bestValue = boardVal;
+            bestMove = move;
+          }
+          alpha = Math.max(alpha, boardVal);
+        } else {
+          if (boardVal < bestValue) {
+            bestValue = boardVal;
+            bestMove = move;
+          }
+          beta = Math.min(beta, boardVal);
+        }
+
+        if (beta <= alpha) break;
+      }
+
+      return bestMove || moves[0];
+    }
+
+    const boardEl = document.getElementById('board');
+    const coordOverlayEl = document.getElementById('coordOverlay');
+
+    function renderBoard() {
+      boardEl.innerHTML = '';
+      coordOverlayEl.innerHTML = '';
+      const isFlipped = (playerColor === 'b');
+      const boardState = chess.board();
+
+      // 체크 상태 확인
+      let inCheckSquare = null;
+      if (chess.in_check()) {
+        const turn = chess.turn();
+        for (let r = 0; r < 8; r++) {
+          for (let c = 0; c < 8; c++) {
+            const piece = boardState[r][c];
+            if (piece && piece.type === 'k' && piece.color === turn) {
+              const file = String.fromCharCode('a'.charCodeAt(0) + c);
+              const rank = 8 - r;
+              inCheckSquare = file + rank;
+              break;
+            }
+          }
+        }
+      }
+
+      // 8x8 칸 렌더링
+      for (let displayRow = 0; displayRow < 8; displayRow++) {
+        for (let displayCol = 0; displayCol < 8; displayCol++) {
+          const r = isFlipped ? (7 - displayRow) : displayRow;
+          const c = isFlipped ? (7 - displayCol) : displayCol;
+
+          const file = String.fromCharCode('a'.charCodeAt(0) + c);
+          const rank = 8 - r;
+          const square = file + rank;
+
+          const isDark = (r + c) % 2 === 1;
+          const sqDiv = document.createElement('div');
+          sqDiv.className = `relative flex items-center justify-center ${isDark ? 'sq-dark' : 'sq-light'} cursor-pointer select-none transition-colors duration-100`;
+          sqDiv.dataset.square = square;
+
+          // 선택된 칸 하이라이트
+          if (selectedSquare === square) {
+            sqDiv.classList.add('sq-selected');
+          }
+
+          // 마지막 이동 하이라이트
+          if (lastMove && (lastMove.from === square || lastMove.to === square)) {
+            sqDiv.classList.add('sq-last-move');
+          }
+
+          // 체크 상태 왕 하이라이트
+          if (inCheckSquare === square) {
+            sqDiv.classList.add('sq-in-check');
+          }
+
+          // 기물 표시
+          const piece = boardState[r][c];
+          if (piece) {
+            const pieceKey = piece.color + piece.type.toUpperCase();
+            const pieceHtml = PIECE_SVGS[pieceKey];
+            if (pieceHtml) {
+              const pieceWrapper = document.createElement('div');
+              pieceWrapper.className = 'w-full h-full flex items-center justify-center pointer-events-none';
+              pieceWrapper.innerHTML = pieceHtml;
+              sqDiv.appendChild(pieceWrapper);
+            }
+          }
+
+          // 이동 힌트 점 표시
+          const moveHint = legalMovesForSelected.find(m => m.to === square);
+          if (moveHint) {
+            const hintMarker = document.createElement('div');
+            if (moveHint.captured || (moveHint.flags && moveHint.flags.includes('e'))) {
+              hintMarker.className = 'capture-hint';
+            } else {
+              hintMarker.className = 'move-hint';
+            }
+            sqDiv.appendChild(hintMarker);
+          }
+
+          // 클릭 및 터치 이벤트
+          sqDiv.addEventListener('click', () => onSquareClick(square));
+          boardEl.appendChild(sqDiv);
+
+          // 좌표 라벨 (a-h, 1-8)
+          if (displayCol === 0) {
+            const rankLabel = document.createElement('span');
+            rankLabel.className = `absolute top-0.5 left-1 text-[10px] font-bold ${isDark ? 'text-amber-100/70' : 'text-slate-600/70'}`;
+            rankLabel.textContent = rank;
+            sqDiv.appendChild(rankLabel);
+          }
+          if (displayRow === 7) {
+            const fileLabel = document.createElement('span');
+            fileLabel.className = `absolute bottom-0.5 right-1 text-[10px] font-bold ${isDark ? 'text-amber-100/70' : 'text-slate-600/70'}`;
+            fileLabel.textContent = file;
+            sqDiv.appendChild(fileLabel);
+          }
+        }
+      }
+    }
+
+    // 칸 클릭 처리
+    function onSquareClick(square) {
+      if (isAiThinking || chess.game_over()) return;
+      if (chess.turn() !== playerColor) return;
+
+      const piece = chess.get(square);
+
+      if (selectedSquare) {
+        if (selectedSquare === square) {
+          clearSelection();
+          renderBoard();
+          return;
+        }
+
+        const targetMove = legalMovesForSelected.find(m => m.to === square);
+
+        if (targetMove) {
+          if (targetMove.flags.includes('p')) {
+            pendingPromotionMove = { from: selectedSquare, to: square };
+            showPromotionModal();
+            return;
+          }
+
+          executeMove({ from: selectedSquare, to: square });
+          clearSelection();
+          return;
+        } else if (piece && piece.color === playerColor) {
+          selectSquare(square);
+          renderBoard();
+          return;
+        } else {
+          clearSelection();
+          renderBoard();
+          return;
+        }
+      }
+
+      if (piece && piece.color === playerColor) {
+        selectSquare(square);
+        renderBoard();
+      }
+    }
+
+    function selectSquare(square) {
+      selectedSquare = square;
+      legalMovesForSelected = chess.moves({ square: square, verbose: true });
+    }
+
+    function clearSelection() {
+      selectedSquare = null;
+      legalMovesForSelected = [];
+    }
+
+    // 수 실행
+    function executeMove(moveObj) {
+      const moveResult = chess.move(moveObj);
+      if (!moveResult) return false;
+
+      lastMove = { from: moveResult.from, to: moveResult.to };
+
+      if (chess.in_check()) {
+        sfx.check();
+      } else if (moveResult.captured) {
+        sfx.capture();
+      } else {
+        sfx.move();
+      }
+
+      updateUI();
+      renderBoard();
+
+      if (checkGameOver()) {
+        return true;
+      }
+
+      if (chess.turn() !== playerColor) {
+        triggerAiMove();
+      }
+
+      return true;
+    }
+
+    // AI 연산 및 수 실행
+    function triggerAiMove() {
+      if (chess.game_over()) return;
+
+      isAiThinking = true;
+      setAiStatus(true);
+
+      const depthMap = { 1: 1, 2: 2, 3: 3, 4: 4 };
+      const searchDepth = depthMap[aiDifficulty] || 2;
+      const thinkTime = aiDifficulty === 1 ? 400 : (aiDifficulty === 2 ? 650 : (aiDifficulty === 3 ? 900 : 1200));
+
+      setTimeout(() => {
+        try {
+          const aiColor = chess.turn();
+          const bestMove = calculateBestMove(chess, searchDepth, aiColor);
+
+          if (bestMove) {
+            executeMove(bestMove);
+          }
+        } catch (err) {
+          console.error("AI Error:", err);
+          const fallback = chess.moves({ verbose: true })[0];
+          if (fallback) executeMove(fallback);
+        } finally {
+          isAiThinking = false;
+          setAiStatus(false);
+        }
+      }, thinkTime);
+    }
+
+    function setAiStatus(thinking) {
+      const statusText = document.getElementById('aiStatusText');
+      const badge = document.getElementById('aiThinkingBadge');
+      if (thinking) {
+        statusText.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin text-rose-400"></i> <span class="text-rose-400 font-bold">수읽기 중...</span>`;
+        badge.classList.remove('hidden');
+      } else {
+        statusText.innerHTML = `<span>대기 중</span>`;
+        badge.classList.add('hidden');
+      }
+    }
+
+    // UI 동기화
+    function updateUI() {
+      const currentTurn = chess.turn();
+      const isPlayerTurn = (currentTurn === playerColor);
+      const turnBadge = document.getElementById('turnBadge');
+
+      if (isPlayerTurn) {
+        turnBadge.className = 'px-3 py-1.5 rounded-lg text-xs font-bold shadow-md bg-amber-500 text-slate-950 flex items-center gap-1.5';
+        turnBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-slate-950 animate-pulse"></span><span>내 차례</span>`;
+      } else {
+        turnBadge.className = 'px-3 py-1.5 rounded-lg text-xs font-bold shadow-md bg-slate-800 text-slate-400 flex items-center gap-1.5';
+        turnBadge.innerHTML = `<i class="fa-solid fa-hourglass-half text-rose-400 animate-spin"></i><span>상대 차례</span>`;
+      }
+
+      updateCapturedPieces();
+      updateMoveHistory();
+    }
+
+    function updateCapturedPieces() {
+      const history = chess.history({ verbose: true });
+      const capturedByWhite = [];
+      const capturedByBlack = [];
+
+      history.forEach(m => {
+        if (m.captured) {
+          if (m.color === 'w') {
+            capturedByWhite.push('b' + m.captured.toUpperCase());
+          } else {
+            capturedByBlack.push('w' + m.captured.toUpperCase());
+          }
+        }
+      });
+
+      const playerCapturedContainer = document.getElementById('playerCapturedPieces');
+      const aiCapturedContainer = document.getElementById('aiCapturedPieces');
+
+      const isPlayerWhite = (playerColor === 'w');
+      const playerCaptured = isPlayerWhite ? capturedByWhite : capturedByBlack;
+      const aiCaptured = isPlayerWhite ? capturedByBlack : capturedByWhite;
+
+      const renderPiecesMini = (pieces) => {
+        return pieces.map(pKey => {
+          return `<div class="w-4 h-4 inline-flex items-center justify-center">${PIECE_SVGS[pKey]}</div>`;
+        }).join('');
+      };
+
+      playerCapturedContainer.innerHTML = renderPiecesMini(playerCaptured);
+      aiCapturedContainer.innerHTML = renderPiecesMini(aiCaptured);
+    }
+
+    function updateMoveHistory() {
+      const moves = chess.history();
+      const container = document.getElementById('movesContainer');
+      const moveCountText = document.getElementById('moveCountText');
+
+      moveCountText.textContent = `${moves.length}수 진행`;
+
+      if (moves.length === 0) {
+        container.innerHTML = `<div class="text-center py-6 text-slate-500 italic text-xs">기물이 이동하면 이곳에 표준 기보법(SAN)이 기록됩니다.</div>`;
+        return;
+      }
+
+      let html = '';
+      for (let i = 0; i < moves.length; i += 2) {
+        const moveNum = Math.floor(i / 2) + 1;
+        const whiteMove = moves[i] || '';
+        const blackMove = moves[i + 1] || '';
+
+        html += `
+          <div class="flex items-center justify-between py-1 px-2 rounded hover:bg-slate-800/80 transition-colors">
+            <span class="w-8 text-slate-500 font-bold">${moveNum}.</span>
+            <span class="flex-1 text-slate-200 font-semibold">${whiteMove}</span>
+            <span class="flex-1 text-slate-400">${blackMove}</span>
+          </div>
+        `;
+      }
+      container.innerHTML = html;
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // 게임 종료 여부 확인 및 난이도 해금 처리
+    function checkGameOver() {
+      if (!chess.game_over()) return false;
+
+      const gameOverModal = document.getElementById('gameOverModal');
+      const title = document.getElementById('gameOverTitle');
+      const desc = document.getElementById('gameOverDesc');
+      const icon = document.getElementById('gameOverIcon');
+      const unlockAlert = document.getElementById('levelUnlockAlert');
+      const unlockName = document.getElementById('levelUnlockName');
+      const nextLevelBtn = document.getElementById('modalNextLevelBtn');
+
+      unlockAlert.classList.add('hidden');
+      nextLevelBtn.classList.add('hidden');
+
+      let isWin = false;
+
+      if (chess.in_checkmate()) {
+        const playerWon = (chess.turn() !== playerColor);
+        isWin = playerWon;
+
+        if (playerWon) {
+          title.textContent = '승리하셨습니다!';
+          desc.textContent = `축하합니다! ${LEVEL_CONFIG[aiDifficulty].name} AI를 상대로 멋진 체크메이트를 거두었습니다.`;
+          icon.innerHTML = `<i class="fa-solid fa-trophy text-amber-400"></i>`;
+          icon.className = 'w-16 h-16 mx-auto rounded-2xl bg-amber-500/10 border-2 border-amber-400 text-amber-400 flex items-center justify-center text-3xl mb-4';
+
+          // 현재 최고 해금 레벨 클리어 시 다음 난이도 해금
+          if (aiDifficulty === maxUnlockedLevel && maxUnlockedLevel < 4) {
+            maxUnlockedLevel++;
+            localStorage.setItem(STORAGE_KEY, maxUnlockedLevel);
+            
+            const nextLvlInfo = LEVEL_CONFIG[maxUnlockedLevel];
+            unlockName.textContent = `${nextLvlInfo.sub} ${nextLvlInfo.name} 난이도가 열렸습니다!`;
+            unlockAlert.classList.remove('hidden');
+            nextLevelBtn.classList.remove('hidden');
+
+            renderDifficultyButtons();
+          } else if (aiDifficulty < maxUnlockedLevel && maxUnlockedLevel < 4) {
+            nextLevelBtn.classList.remove('hidden');
+          } else if (maxUnlockedLevel === 4 && aiDifficulty === 4) {
+            desc.textContent = `경이롭습니다! 마스터 AI까지 모두 정복하여 전관왕을 달성했습니다!`;
+          }
+        } else {
+          title.textContent = '체크메이트 패배';
+          desc.textContent = `AI가 체크메이트를 달성했습니다. 전략을 가다듬어 다시 도전해보세요!`;
+          icon.innerHTML = `<i class="fa-solid fa-skull text-rose-500"></i>`;
+          icon.className = 'w-16 h-16 mx-auto rounded-2xl bg-rose-500/10 border-2 border-rose-500 text-rose-500 flex items-center justify-center text-3xl mb-4';
+        }
+      } else if (chess.in_stalemate()) {
+        title.textContent = '무승부 (스테일메이트)';
+        desc.textContent = '움직일 수 있는 합법적인 수가 없어 스테일메이트로 비겼습니다.';
+        icon.innerHTML = `<i class="fa-solid fa-handshake text-blue-400"></i>`;
+        icon.className = 'w-16 h-16 mx-auto rounded-2xl bg-blue-500/10 border-2 border-blue-400 text-blue-400 flex items-center justify-center text-3xl mb-4';
+      } else if (chess.in_threefold_repetition()) {
+        title.textContent = '무승부 (3회 동형반복)';
+        desc.textContent = '동일한 국면이 3번 반복되어 무승부로 종료되었습니다.';
+        icon.innerHTML = `<i class="fa-solid fa-handshake text-blue-400"></i>`;
+        icon.className = 'w-16 h-16 mx-auto rounded-2xl bg-blue-500/10 border-2 border-blue-400 text-blue-400 flex items-center justify-center text-3xl mb-4';
+      } else if (chess.insufficient_material()) {
+        title.textContent = '무승부 (기물 부족)';
+        desc.textContent = '체크메이트를 시킬 수 있는 기물이 부족하여 무승부로 처리됩니다.';
+        icon.innerHTML = `<i class="fa-solid fa-handshake text-blue-400"></i>`;
+        icon.className = 'w-16 h-16 mx-auto rounded-2xl bg-blue-500/10 border-2 border-blue-400 text-blue-400 flex items-center justify-center text-3xl mb-4';
+      } else {
+        title.textContent = '대국 종료 (무승부)';
+        desc.textContent = '규칙에 따라 대국이 무승부로 종료되었습니다.';
+        icon.innerHTML = `<i class="fa-solid fa-handshake text-blue-400"></i>`;
+      }
+
+      sfx.gameover(isWin);
+      gameOverModal.classList.remove('hidden');
+      return true;
+    }
+
+    // 프로모션 모달 제어
+    function showPromotionModal() {
+      const modal = document.getElementById('promotionModal');
+      const choices = document.getElementById('promotionChoices');
+      choices.innerHTML = '';
+
+      const promotionPieces = [
+        { type: 'q', name: '퀸 (Queen)' },
+        { type: 'r', name: '룩 (Rook)' },
+        { type: 'b', name: '비숍 (Bishop)' },
+        { type: 'n', name: '나이트 (Knight)' }
+      ];
+
+      promotionPieces.forEach(p => {
+        const btn = document.createElement('button');
+        btn.className = 'flex flex-col items-center justify-center p-3 rounded-xl bg-slate-800 hover:bg-amber-600/30 hover:border-amber-400 border border-slate-700 transition active:scale-95';
+        const pKey = playerColor + p.type.toUpperCase();
+        btn.innerHTML = `
+          <div class="w-12 h-12 flex items-center justify-center mb-1.5">${PIECE_SVGS[pKey]}</div>
+          <span class="text-[11px] font-bold text-slate-200">${p.type.toUpperCase()}</span>
+        `;
+        btn.onclick = () => {
+          modal.classList.add('hidden');
+          if (pendingPromotionMove) {
+            executeMove({
+              from: pendingPromotionMove.from,
+              to: pendingPromotionMove.to,
+              promotion: p.type
+            });
+            pendingPromotionMove = null;
+            clearSelection();
+          }
+        };
+        choices.appendChild(btn);
+      });
+
+      modal.classList.remove('hidden');
+    }
+
+    // 새 게임 초기화
+    function startNewGame() {
+      chess.reset();
+      clearSelection();
+      lastMove = null;
+      isAiThinking = false;
+      document.getElementById('gameOverModal').classList.add('hidden');
+      document.getElementById('promotionModal').classList.add('hidden');
+
+      const badge = document.getElementById('playerSideBadge');
+      if (playerColor === 'w') {
+        badge.className = 'text-[11px] px-2 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 border border-emerald-800/60 font-medium';
+        badge.textContent = '백(White) 선공';
+      } else {
+        badge.className = 'text-[11px] px-2 py-0.5 rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/60 font-medium';
+        badge.textContent = '흑(Black) 후공';
+      }
+
+      setAiStatus(false);
+      updateUI();
+      renderBoard();
+
+      if (playerColor === 'b') {
+        triggerAiMove();
+      }
+    }
+
+    // 무르기 기능
+    function handleUndo() {
+      if (isAiThinking) return;
+      
+      const history = chess.history({ verbose: true });
+      if (history.length === 0) return;
+
+      if (chess.turn() === playerColor) {
+        chess.undo();
+        chess.undo();
+      } else {
+        chess.undo();
+      }
+
+      const updatedHistory = chess.history({ verbose: true });
+      lastMove = updatedHistory.length > 0 ? updatedHistory[updatedHistory.length - 1] : null;
+
+      clearSelection();
+      updateUI();
+      renderBoard();
+      sfx.move();
+    }
+
+    function renderDifficultyButtons() {
+      const diffButtons = document.querySelectorAll('.diff-btn');
+      const progressText = document.getElementById('unlockProgressText');
+      progressText.textContent = `(${maxUnlockedLevel}/4 해금)`;
+
+      diffButtons.forEach(btn => {
+        const lvl = parseInt(btn.dataset.level, 10);
+        const config = LEVEL_CONFIG[lvl];
+
+        if (lvl <= maxUnlockedLevel) {
+          const isSelected = (lvl === aiDifficulty);
+          btn.disabled = false;
+          btn.className = isSelected 
+            ? 'diff-btn py-2 text-xs font-semibold rounded-lg border border-indigo-500 bg-indigo-600 text-white shadow-md shadow-indigo-600/30 transition flex flex-col items-center justify-center gap-0.5 cursor-pointer'
+            : 'diff-btn py-2 text-xs font-semibold rounded-lg border border-slate-700 bg-slate-800 text-slate-300 hover:border-indigo-400 transition flex flex-col items-center justify-center gap-0.5 cursor-pointer';
+
+          const starIcon = lvl < maxUnlockedLevel ? '<i class="fa-solid fa-star text-[8px] text-amber-400 mr-0.5"></i>' : '';
+          btn.innerHTML = `
+            <span>${starIcon}${config.name}</span>
+            <span class="text-[9px] ${isSelected ? 'text-indigo-200' : 'text-slate-400'} font-normal">${config.sub}</span>
+          `;
+        } else {
+          btn.disabled = false;
+          btn.className = 'diff-btn py-2 text-xs font-semibold rounded-lg border border-slate-800 bg-slate-900/60 text-slate-500 cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5 opacity-50';
+          btn.innerHTML = `
+            <span><i class="fa-solid fa-lock text-[10px] mr-1"></i>${config.name}</span>
+            <span class="text-[9px] text-slate-600 font-normal">${config.sub}</span>
+          `;
+        }
+      });
+
+      document.getElementById('aiBadgeDifficulty').textContent = LEVEL_CONFIG[aiDifficulty].name;
+    }
+
+    function showLockNotice() {
+      const notice = document.getElementById('lockNoticeText');
+      notice.classList.remove('hidden');
+      notice.classList.add('animate-pulse');
+      setTimeout(() => {
+        notice.classList.remove('animate-pulse');
+      }, 500);
+      setTimeout(() => {
+        notice.classList.add('hidden');
+      }, 2600);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('newGameBtn').addEventListener('click', startNewGame);
+      document.getElementById('modalRestartBtn').addEventListener('click', startNewGame);
+      document.getElementById('modalCloseBtn').addEventListener('click', () => {
+        document.getElementById('gameOverModal').classList.add('hidden');
+      });
+
+      document.getElementById('modalNextLevelBtn').addEventListener('click', () => {
+        if (aiDifficulty < maxUnlockedLevel) {
+          aiDifficulty++;
+        }
+        renderDifficultyButtons();
+        startNewGame();
+      });
+
+      document.getElementById('resetProgressBtn').addEventListener('click', () => {
+        maxUnlockedLevel = 1;
+        aiDifficulty = 1;
+        localStorage.setItem(STORAGE_KEY, '1');
+        renderDifficultyButtons();
+        startNewGame();
+      });
+
+      document.getElementById('undoMoveBtn').addEventListener('click', handleUndo);
+
+      const diffButtons = document.querySelectorAll('.diff-btn');
+      diffButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const selectedLvl = parseInt(btn.dataset.level, 10);
+          
+          if (selectedLvl > maxUnlockedLevel) {
+            showLockNotice();
+            sfx.playTone(200, 'sawtooth', 0.15, 0.1);
+            return;
+          }
+
+          if (aiDifficulty === selectedLvl) return;
+
+          aiDifficulty = selectedLvl;
+          renderDifficultyButtons();
+          startNewGame();
+        });
+      });
+
+      const whiteBtn = document.getElementById('sideWhiteBtn');
+      const blackBtn = document.getElementById('sideBlackBtn');
+
+      whiteBtn.addEventListener('click', () => {
+        if (playerColor === 'w') return;
+        playerColor = 'w';
+        whiteBtn.className = 'py-2 px-3 rounded-lg border-2 border-amber-400 bg-amber-500/10 text-amber-200 text-xs font-bold flex items-center justify-center gap-2 transition';
+        blackBtn.className = 'py-2 px-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-400 text-xs font-bold flex items-center justify-center gap-2 transition hover:border-slate-500';
+        startNewGame();
+      });
+
+      blackBtn.addEventListener('click', () => {
+        if (playerColor === 'b') return;
+        playerColor = 'b';
+        blackBtn.className = 'py-2 px-3 rounded-lg border-2 border-indigo-400 bg-indigo-500/10 text-indigo-200 text-xs font-bold flex items-center justify-center gap-2 transition';
+        whiteBtn.className = 'py-2 px-3 rounded-lg border border-slate-700 bg-slate-800 text-slate-400 text-xs font-bold flex items-center justify-center gap-2 transition hover:border-slate-500';
+        startNewGame();
+      });
+
+      const soundBtn = document.getElementById('soundToggleBtn');
+      const soundIcon = document.getElementById('soundIcon');
+      soundBtn.addEventListener('click', () => {
+        sfx.enabled = !sfx.enabled;
+        if (sfx.enabled) {
+          soundIcon.className = 'fa-solid fa-volume-high text-amber-400';
+          sfx.move();
+        } else {
+          soundIcon.className = 'fa-solid fa-volume-xmark text-slate-500';
+        }
+      });
+
+      const helpBtn = document.getElementById('helpBtn');
+      const helpModal = document.getElementById('helpModal');
+      const closeHelpBtn = document.getElementById('closeHelpBtn');
+
+      helpBtn.addEventListener('click', () => helpModal.classList.remove('hidden'));
+      closeHelpBtn.addEventListener('click', () => helpModal.classList.add('hidden'));
+      helpModal.addEventListener('click', (e) => {
+        if (e.target === helpModal) helpModal.classList.add('hidden');
+      });
+
+      renderDifficultyButtons();
+      startNewGame();
+    });
+  </script>
+</body>
+</html>
